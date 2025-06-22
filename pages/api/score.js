@@ -2,7 +2,7 @@ import Parser from 'rss-parser';
 const parser = new Parser();
 
 import { Redis } from "@upstash/redis";
-const redis = Redis.fromEnv(); // <--- NEW
+const redis = Redis.fromEnv();
 
 const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
@@ -23,7 +23,7 @@ function timelessWW3Score(headlines) {
 
   for (const headline of headlines) {
     const lower = headline.toLowerCase();
-        let spCount = superpowers.filter(p => lower.includes(p)).length;
+    let spCount = superpowers.filter(p => lower.includes(p)).length;
     let actionHit = actions.some(a => lower.includes(a));
     if (spCount >= 2 && actionHit) superpowerConflict = true;
     if (lower.includes("nuclear facilit") || lower.includes("nuclear site")) nuclearTarget = true;
@@ -64,16 +64,20 @@ export default async function handler(req, res) {
       link: item.link
     }));
   } catch (err) {
-  // If RSS fetch fails, use Redis cache if available
-  const cachedScoreData = await redis.get("ww3:score");
-  if (cachedScoreData) return res.status(200).json(JSON.parse(cachedScoreData));
-  return res.status(500).json({
-    score: -100,
-    summary: "Unable to fetch headlines.",
-    headlines: [],
-    lastUpdated: new Date().toISOString(),
-  });
-}
+    // If RSS fetch fails, use Redis cache if available
+    const cachedScoreData = await redis.get("ww3:score");
+    if (cachedScoreData) {
+      res.setHeader('Cache-Control', 'public, max-age=900, stale-while-revalidate=60'); // <--- ADD HERE
+      return res.status(200).json(JSON.parse(cachedScoreData));
+    }
+    res.setHeader('Cache-Control', 'public, max-age=900, stale-while-revalidate=60'); // <--- ADD HERE
+    return res.status(500).json({
+      score: -100,
+      summary: "Unable to fetch headlines.",
+      headlines: [],
+      lastUpdated: new Date().toISOString(),
+    });
+  }
 
   // 2. Hash the headlines to detect changes
   const headlinesHash = hashHeadlines(headlines);
@@ -89,8 +93,10 @@ export default async function handler(req, res) {
     cachedTimestamp &&
     now - Number(cachedTimestamp) < CACHE_TTL_MS
   ) {
+    res.setHeader('Cache-Control', 'public, max-age=900, stale-while-revalidate=60'); // <--- ADD HERE
     return res.status(200).json(JSON.parse(cachedScoreData));
   }
+
 
   // 4. Calculate scores (algorithm + AI)
   const algoScore = timelessWW3Score(headlines.map(h => h.title));
@@ -161,7 +167,7 @@ Respond in strict JSON only: {"score": [number], "summary": "[1-2 sentences expl
   // Clamp again
   finalScore = Math.max(0, Math.min(100, finalScore));
 
-  // 5. Cache everything, with the new hash
+// 5. Cache everything, with the new hash
   const newScoreData = {
     score: finalScore,
     summary: gptSummary,
@@ -171,9 +177,10 @@ Respond in strict JSON only: {"score": [number], "summary": "[1-2 sentences expl
     lastUpdated: new Date().toISOString(),
   };
   await Promise.all([
-    redis.set("ww3:score", JSON.stringify(newScoreData), { ex: 15 * 60 }),
-    redis.set("ww3:hash", headlinesHash, { ex: 15 * 60 }),
-    redis.set("ww3:timestamp", String(now), { ex: 15 * 60 }),
+    redis.set("ww3:score", JSON.stringify(newScoreData), { ex: CACHE_TTL_MS / 1000 }),
+    redis.set("ww3:hash", headlinesHash, { ex: CACHE_TTL_MS / 1000 }),
+    redis.set("ww3:timestamp", String(now), { ex: CACHE_TTL_MS / 1000 }),
   ]);
+  res.setHeader('Cache-Control', 'public, max-age=900, stale-while-revalidate=60'); // <--- ADD HERE
   return res.status(200).json(newScoreData);
 }
