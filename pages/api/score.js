@@ -3,7 +3,14 @@ const parser = new Parser();
 
 let lastScoreData = null;
 let lastFetchTime = 0;
+let lastHeadlinesHash = "";   // <--- NEW
+
 const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
+function hashHeadlines(headlines) {
+  // Use a simple hash: join all titles with '||'
+  return headlines.map(h => h.title).join("||");
+}
 
 function timelessWW3Score(headlines) {
   const text = headlines.join(" ").toLowerCase();
@@ -17,7 +24,7 @@ function timelessWW3Score(headlines) {
 
   for (const headline of headlines) {
     const lower = headline.toLowerCase();
-    let spCount = superpowers.filter(p => lower.includes(p)).length;
+        let spCount = superpowers.filter(p => lower.includes(p)).length;
     let actionHit = actions.some(a => lower.includes(a));
     if (spCount >= 2 && actionHit) superpowerConflict = true;
     if (lower.includes("nuclear facilit") || lower.includes("nuclear site")) nuclearTarget = true;
@@ -47,25 +54,45 @@ function timelessWW3Score(headlines) {
 export default async function handler(req, res) {
   const now = Date.now();
 
-  if (lastScoreData && (now - lastFetchTime < CACHE_TTL_MS)) {
-    return res.status(200).json(lastScoreData);
-  }
-
+  // 1. Fetch latest headlines (always, so we can compare hashes)
+  let headlines = [];
   try {
-    // Get headlines
     const feed = await parser.parseURL(
       'https://news.google.com/rss/search?q=war+OR+conflict+OR+nuclear+OR+military+OR+tension+OR+crisis+OR+iran+OR+china+OR+russia+OR+usa&hl=en&gl=US&ceid=US:en'
     );
-    const headlines = feed.items.slice(0, 7).map(item => ({
+    headlines = feed.items.slice(0, 7).map(item => ({
       title: item.title,
       link: item.link
     }));
+  } catch (err) {
+    // If RSS fetch fails, use cache if available
+    if (lastScoreData) return res.status(200).json(lastScoreData);
+    return res.status(500).json({
+      score: -100,
+      summary: "Unable to fetch headlines.",
+      headlines: [],
+      lastUpdated: new Date().toISOString(),
+    });
+  }
 
-    // --- Algorithmic Score
-    const algoScore = timelessWW3Score(headlines.map(h => h.title));
+  // 2. Hash the headlines to detect changes
+  const headlinesHash = hashHeadlines(headlines);
 
-    // --- AI Adjustment (GPT Weighted)
-    const prompt = `
+  // 3. Use cache ONLY if: recent + headlines unchanged
+  const isCacheValid =
+    lastScoreData &&
+    (now - lastFetchTime < CACHE_TTL_MS) &&
+    (headlinesHash === lastHeadlinesHash);
+
+  if (isCacheValid) {
+    return res.status(200).json(lastScoreData);
+  }
+
+  // 4. Calculate scores (algorithm + AI)
+  const algoScore = timelessWW3Score(headlines.map(h => h.title));
+
+  // --- AI Adjustment (GPT Weighted)
+  const prompt = `
 You are an expert geopolitical analyst for a World War III Countdown app.
 Given these headlines:
 ${headlines.map((h, i) => `${i + 1}. ${h.title}`).join("\n")}
@@ -82,70 +109,65 @@ Estimate a global war risk score from 0 (peace) to 100 (World War III is officia
 Respond in strict JSON only: {"score": [number], "summary": "[1-2 sentences explanation, mention key headlines]" }
 `;
 
-    let gptScore = null;
-    let gptSummary = "";
-    try {
-      const gptResp = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.OPENAI_KEY}`,
-        },
-        body: JSON.stringify({
-          model: "gpt-4.1",
-          messages: [{ role: "user", content: prompt }],
-          max_tokens: 280,
-          temperature: 0.12,
-        }),
-      });
-
-      const gptJson = await gptResp.json();
-      let gptText = gptJson.choices?.[0]?.message?.content || "{}";
-      gptText = gptText.trim();
-      if (gptText.startsWith("```")) {
-        gptText = gptText.replace(/^```(json)?/i, "").replace(/```$/, "").trim();
-      }
-      const parsed = JSON.parse(gptText);
-      if (typeof parsed.score === "number") gptScore = Number(parsed.score);
-      if (typeof parsed.summary === "string") gptSummary = parsed.summary.trim();
-    } catch (err) {
-      gptScore = null;
-      gptSummary = "AI summary unavailable (GPT error).";
-    }
-
-    // --- Hybrid Score
-    let finalScore = algoScore;
-    // If AI's score is plausible (within 30 of algo) and not crazy, blend 60/40 (algo/ai)
-    if (
-      gptScore !== null &&
-      Math.abs(gptScore - algoScore) <= 30 &&
-      gptScore >= 0 &&
-      gptScore <= 100
-    ) {
-      finalScore = Number(
-        ((algoScore * 0.6 + gptScore * 0.4)).toFixed(2)  // TWO decimals
-      );
-    }
-
-    // Clamp again
-    finalScore = Math.max(0, Math.min(100, finalScore));
-
-    lastScoreData = {
-      score: finalScore,
-      summary: gptSummary,
-      headlines,
-      algorithmScore: algoScore,
-      gptScore,
-      lastUpdated: new Date().toISOString(),
-    };
-    lastFetchTime = now;
-    return res.status(200).json(lastScoreData);
-  } catch (err) {
-    return res.status(500).json({
-      score: -100,
-      summary: "AI error: Unexpected system error. (AI retreated to its bunker.)",
-      headlines: [],
-      lastUpdated: new Date().toISOString(),
+  let gptScore = null;
+  let gptSummary = "";
+  try {
+    const gptResp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.OPENAI_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4.1",
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 280,
+        temperature: 0.12,
+      }),
     });
+
+    const gptJson = await gptResp.json();
+    let gptText = gptJson.choices?.[0]?.message?.content || "{}";
+    gptText = gptText.trim();
+    if (gptText.startsWith("```")) {
+      gptText = gptText.replace(/^```(json)?/i, "").replace(/```$/, "").trim();
+    }
+    const parsed = JSON.parse(gptText);
+    if (typeof parsed.score === "number") gptScore = Number(parsed.score);
+    if (typeof parsed.summary === "string") gptSummary = parsed.summary.trim();
+  } catch (err) {
+    gptScore = null;
+    gptSummary = "AI summary unavailable (GPT error).";
   }
+
+  // --- Hybrid Score
+  let finalScore = algoScore;
+  // If AI's score is plausible (within 30 of algo) and not crazy, blend 60/40 (algo/ai)
+  if (
+    gptScore !== null &&
+    Math.abs(gptScore - algoScore) <= 30 &&
+    gptScore >= 0 &&
+    gptScore <= 100
+  ) {
+    finalScore = Number(
+      ((algoScore * 0.6 + gptScore * 0.4)).toFixed(2)  // TWO decimals
+    );
+  }
+
+  // Clamp again
+  finalScore = Math.max(0, Math.min(100, finalScore));
+
+  // 5. Cache everything, with the new hash
+  lastScoreData = {
+    score: finalScore,
+    summary: gptSummary,
+    headlines,
+    algorithmScore: algoScore,
+    gptScore,
+    lastUpdated: new Date().toISOString(),
+  };
+  lastFetchTime = now;
+  lastHeadlinesHash = headlinesHash;
+
+  return res.status(200).json(lastScoreData);
 }
