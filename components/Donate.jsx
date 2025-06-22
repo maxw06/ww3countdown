@@ -16,7 +16,7 @@ export default function Donate() {
           className="w-32 h-32 rounded border border-gray-600 mb-2"
         />
         <span className="text-xs text-gray-400 break-all">
-          BTC: <span className="font-mono">your_bitcoin_address_here</span>
+          BTC: <span className="font-mono">bc1q5uwpeclhf4yun7kx55flgj28qcq7hpqk8kxmxn</span>
         </span>
       </div>
       {/* ETH Example */}
