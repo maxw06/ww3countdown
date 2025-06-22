@@ -1,4 +1,4 @@
-# WW3Countdown.org
+# ww3countdown.org
 
 A nonprofit, open-data project tracking global conflict risk using AI and news.
 - No ads, no personal data collected.
