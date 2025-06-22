@@ -66,7 +66,11 @@ export default async function handler(req, res) {
   } catch (err) {
     // If RSS fetch fails, use Redis cache if available
     const cachedScoreData = await redis.get("ww3:score");
-    if (cachedScoreData) return res.status(200).json(JSON.parse(cachedScoreData));
+    if (cachedScoreData) {
+      res.setHeader('Cache-Control', 'public, max-age=900, stale-while-revalidate=60'); // <--- ADD HERE
+      return res.status(200).json(JSON.parse(cachedScoreData));
+    }
+    res.setHeader('Cache-Control', 'public, max-age=900, stale-while-revalidate=60'); // <--- ADD HERE
     return res.status(500).json({
       score: -100,
       summary: "Unable to fetch headlines.",
@@ -89,8 +93,10 @@ export default async function handler(req, res) {
     cachedTimestamp &&
     now - Number(cachedTimestamp) < CACHE_TTL_MS
   ) {
+    res.setHeader('Cache-Control', 'public, max-age=900, stale-while-revalidate=60'); // <--- ADD HERE
     return res.status(200).json(JSON.parse(cachedScoreData));
   }
+
 
   // 4. Calculate scores (algorithm + AI)
   const algoScore = timelessWW3Score(headlines.map(h => h.title));
@@ -161,7 +167,7 @@ Respond in strict JSON only: {"score": [number], "summary": "[1-2 sentences expl
   // Clamp again
   finalScore = Math.max(0, Math.min(100, finalScore));
 
-  // 5. Cache everything, with the new hash
+// 5. Cache everything, with the new hash
   const newScoreData = {
     score: finalScore,
     summary: gptSummary,
@@ -175,5 +181,6 @@ Respond in strict JSON only: {"score": [number], "summary": "[1-2 sentences expl
     redis.set("ww3:hash", headlinesHash, { ex: CACHE_TTL_MS / 1000 }),
     redis.set("ww3:timestamp", String(now), { ex: CACHE_TTL_MS / 1000 }),
   ]);
+  res.setHeader('Cache-Control', 'public, max-age=900, stale-while-revalidate=60'); // <--- ADD HERE
   return res.status(200).json(newScoreData);
 }
