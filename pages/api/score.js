@@ -1,9 +1,8 @@
 import Parser from 'rss-parser';
 const parser = new Parser();
 
-let lastScoreData = null;
-let lastFetchTime = 0;
-let lastHeadlinesHash = "";   // <--- NEW
+import { Redis } from "@upstash/redis";
+const redis = Redis.fromEnv();
 
 const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
@@ -24,7 +23,7 @@ function timelessWW3Score(headlines) {
 
   for (const headline of headlines) {
     const lower = headline.toLowerCase();
-        let spCount = superpowers.filter(p => lower.includes(p)).length;
+    let spCount = superpowers.filter(p => lower.includes(p)).length;
     let actionHit = actions.some(a => lower.includes(a));
     if (spCount >= 2 && actionHit) superpowerConflict = true;
     if (lower.includes("nuclear facilit") || lower.includes("nuclear site")) nuclearTarget = true;
@@ -65,8 +64,9 @@ export default async function handler(req, res) {
       link: item.link
     }));
   } catch (err) {
-    // If RSS fetch fails, use cache if available
-    if (lastScoreData) return res.status(200).json(lastScoreData);
+    // If RSS fetch fails, use Redis cache if available
+    const cachedScoreData = await redis.get("ww3:score");
+    if (cachedScoreData) return res.status(200).json(JSON.parse(cachedScoreData));
     return res.status(500).json({
       score: -100,
       summary: "Unable to fetch headlines.",
@@ -77,15 +77,19 @@ export default async function handler(req, res) {
 
   // 2. Hash the headlines to detect changes
   const headlinesHash = hashHeadlines(headlines);
+  const [cachedHash, cachedScoreData, cachedTimestamp] = await Promise.all([
+    redis.get("ww3:hash"),
+    redis.get("ww3:score"),
+    redis.get("ww3:timestamp"),
+  ]);
 
-  // 3. Use cache ONLY if: recent + headlines unchanged
-  const isCacheValid =
-    lastScoreData &&
-    (now - lastFetchTime < CACHE_TTL_MS) &&
-    (headlinesHash === lastHeadlinesHash);
-
-  if (isCacheValid) {
-    return res.status(200).json(lastScoreData);
+  if (
+    cachedScoreData &&
+    cachedHash === headlinesHash &&
+    cachedTimestamp &&
+    now - Number(cachedTimestamp) < CACHE_TTL_MS
+  ) {
+    return res.status(200).json(JSON.parse(cachedScoreData));
   }
 
   // 4. Calculate scores (algorithm + AI)
@@ -158,7 +162,7 @@ Respond in strict JSON only: {"score": [number], "summary": "[1-2 sentences expl
   finalScore = Math.max(0, Math.min(100, finalScore));
 
   // 5. Cache everything, with the new hash
-  lastScoreData = {
+  const newScoreData = {
     score: finalScore,
     summary: gptSummary,
     headlines,
@@ -166,8 +170,10 @@ Respond in strict JSON only: {"score": [number], "summary": "[1-2 sentences expl
     gptScore,
     lastUpdated: new Date().toISOString(),
   };
-  lastFetchTime = now;
-  lastHeadlinesHash = headlinesHash;
-
-  return res.status(200).json(lastScoreData);
+  await Promise.all([
+    redis.set("ww3:score", JSON.stringify(newScoreData), { ex: CACHE_TTL_MS / 1000 }),
+    redis.set("ww3:hash", headlinesHash, { ex: CACHE_TTL_MS / 1000 }),
+    redis.set("ww3:timestamp", String(now), { ex: CACHE_TTL_MS / 1000 }),
+  ]);
+  return res.status(200).json(newScoreData);
 }
