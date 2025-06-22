@@ -8,8 +8,8 @@ let lastHeadlinesHash = "";   // <--- NEW
 const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
 function hashHeadlines(headlines) {
-  // Use a simple hash: join all titles with '||'
-  return headlines.map(h => h.title).join("||");
+  // Sort the titles alphabetically before joining, so order changes don't matter
+  return headlines.map(h => h.title).sort().join("||");
 }
 
 function timelessWW3Score(headlines) {
@@ -60,7 +60,7 @@ export default async function handler(req, res) {
     const feed = await parser.parseURL(
       'https://news.google.com/rss/search?q=war+OR+conflict+OR+nuclear+OR+military+OR+tension+OR+crisis+OR+iran+OR+china+OR+russia+OR+usa&hl=en&gl=US&ceid=US:en'
     );
-    headlines = feed.items.slice(0, 7).map(item => ({
+    headlines = feed.items.slice(0, 12).map(item => ({
       title: item.title,
       link: item.link
     }));
