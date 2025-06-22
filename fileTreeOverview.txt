@@ -1,0 +1,21 @@
+my-ww3-app/
+  ├─ pages/
+  │    ├─ index.jsx
+  │    ├─ donate.jsx
+  │    └─ api/
+  │         └─ score.js
+  ├─ components/
+  │    ├─ ScoreCard.jsx
+  │    ├─ Summary.jsx
+  │    ├─ NewsFeed.jsx
+  │    └─ Donate.jsx
+  ├─ public/
+  │    ├─ btc_qr.png
+  │    └─ eth_qr.png
+  ├─ styles/
+  │    └─ globals.css
+  ├─ tailwind.config.js
+  ├─ postcss.config.js
+  ├─ package.json
+  ├─ .gitignore
+  └─ README.md

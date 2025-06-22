@@ -1,0 +1,11 @@
+# WW3Countdown.org
+
+A nonprofit, open-data project tracking global conflict risk using AI and news.
+- No ads, no personal data collected.
+- Donate with crypto to help us stay online.
+
+## Dev Quickstart
+
+1. `npm install`
+2. Add `.env.local` with your API keys.
+3. `npm run dev`
