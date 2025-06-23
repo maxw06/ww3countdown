@@ -129,7 +129,7 @@ Respond in strict JSON only: {"score": [number], "summary": "[1-2 sentences expl
         Authorization: `Bearer ${process.env.OPENAI_KEY}`,
       },
       body: JSON.stringify({
-        model: "gpt-4.1",
+        model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
         max_tokens: 280,
         temperature: 0.12,
