@@ -76,6 +76,7 @@ export default function Home() {
           <div className="mb-2">
             Score legend:
             <span className="text-green-300 ml-1">0–10 Peace</span> |
+            <span className="text-blue-300 ml-1">11–29 Tension</span> |
             <span className="text-yellow-200 ml-1">30–69 Elevated</span> |
             <span className="text-orange-400 ml-1">70–89 Crisis</span> |
             <span className="text-red-400 ml-1">90+ Critical</span> |
