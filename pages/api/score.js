@@ -1,6 +1,3 @@
-// /pages/api/score.js   (Next.js API route example)
-// Or as a Vercel/Netlify serverless function
-
 import Parser from 'rss-parser';
 const parser = new Parser();
 
@@ -9,7 +6,6 @@ const redis = Redis.fromEnv();
 
 const CACHE_TTL_MS = 15 * 60 * 1000; // 15 min
 
-// --- NEWS FEEDS (expand as needed)
 const FEEDS = [
   // General global tensions
   'https://news.google.com/rss/search?q=war+OR+conflict+OR+nuclear+OR+military+OR+tension+OR+crisis+OR+iran+OR+china+OR+russia+OR+usa&hl=en&gl=US&ceid=US:en',
@@ -35,61 +31,58 @@ function dedupeHeadlines(headlines) {
   });
 }
 
-// --- Scoring function: conservative, realistic
-function timelessWW3Score(headlines) {
+// --- Conservative, reality-anchored scoring
+function realisticWW3Score(headlines) {
   const text = headlines.join(' ').toLowerCase();
   let score = 0;
 
-  // Minimum score for major conflicts
+  // Detect peace/ceasefire: major reduction
+  if (/ceasefire|diplomacy|peace talks|negotiation|summit|armistice|paused|de-escalation/.test(text)) score -= 30;
+
+  // Detect regional conflicts: set a minimum but not "crisis"
   const conflicts = [
-    { name: 'russia-ukraine', keywords: ['ukraine', 'donbas', 'russia', 'putin'], min: 20 },
-    { name: 'israel-iran', keywords: ['israel', 'iran', 'hezbollah', 'hamas', 'gaza'], min: 20 },
-    { name: 'taiwan-china', keywords: ['taiwan', 'china', 'beijing', 'pla'], min: 20 }
+    { name: 'russia-ukraine', keywords: ['ukraine', 'donbas', 'russia', 'putin'], min: 25 },
+    { name: 'israel-iran', keywords: ['israel', 'iran', 'hezbollah', 'hamas', 'gaza'], min: 25 },
+    { name: 'taiwan-china', keywords: ['taiwan', 'china', 'beijing', 'pla'], min: 25 }
   ];
   let minScore = 0;
   for (const c of conflicts) {
     if (c.keywords.some(k => text.includes(k))) minScore = Math.max(minScore, c.min);
   }
 
-  // Superpower confrontation logic
+  // Superpower conflict & nuclear logic
   const superpowers = ['us', 'united states', 'america', 'china', 'russia', 'iran', 'nato', 'uk', 'britain', 'france'];
   const actions = ['strike', 'bomb', 'attack', 'launch', 'invade', 'missile', 'retaliat', 'shell', 'drone', 'escalat'];
-  let superpowerConflict = false;
-  let nuclearTarget = false;
-
+  let superpowerConflict = 0;
+  let nuclearThreat = 0;
   for (const h of headlines) {
     const lower = h.toLowerCase();
     const spCount = superpowers.filter(p => lower.includes(p)).length;
     const actionHit = actions.some(a => lower.includes(a));
-    if (spCount >= 2 && actionHit) superpowerConflict = true;
-    if (lower.includes('nuclear facilit') || lower.includes('nuclear site') || lower.includes('nuclear program')) nuclearTarget = true;
+    if (spCount >= 2 && actionHit) superpowerConflict++;
+    if (lower.includes('nuclear threat') || lower.includes('nuclear site') || lower.includes('nuclear attack')) nuclearThreat++;
   }
+  if (superpowerConflict >= 2 && nuclearThreat > 0) score += 70;
+  else if (superpowerConflict >= 2) score += 45;
+  else if (superpowerConflict === 1) score += 25;
+  else if (nuclearThreat > 0) score += 20;
 
-  if (superpowerConflict && nuclearTarget) score += 65;
-  else if (superpowerConflict) score += 40;
-  else if (nuclearTarget) score += 20;
+  // Escalation/war language (minor bump)
+  if (/major escalation|total war|on the brink|direct military/.test(text)) score += 10;
 
-  // Escalation phrases
-  if (/major escalation|on the brink|total war|full-scale|direct military|regional war|all-out war/.test(text)) score += 15;
-
-  // Strike/attack keywords
-  score += (text.match(/strike|attack|bombing|missile|drone|shelling/g) || []).length * 4;
-
-  // Sanctions/retaliation/warnings
+  // Minor strikes, sanctions, etc.
+  score += (text.match(/strike|attack|bombing|missile|drone|shelling/g) || []).length * 3;
   score += (text.match(/sanction|retaliat|warning|consequence|escalation|grave warning/g) || []).length * 2;
 
-  // Peace/diplomacy (strong negative)
-  if (/ceasefire|diplomacy|peace talks|negotiation|de-escalation|summit|armistice/.test(text)) score -= 10;
-
-  // Final clamp (minimum from hotspots)
-  score = Math.max(minScore, Math.max(0, Math.min(100, score)));
+  // Clamp: never > 60 unless double superpower/nuclear AND AI agrees
+  score = Math.max(minScore, Math.max(0, Math.min(score, 60)));
   return Number(score.toFixed(2));
 }
 
 export default async function handler(req, res) {
   const now = Date.now();
 
-  // 1. Fetch and dedupe headlines
+  // 1. Fetch & dedupe headlines
   let headlines = [];
   try {
     const feeds = await Promise.all(FEEDS.map(url => parser.parseURL(url)));
@@ -97,7 +90,7 @@ export default async function handler(req, res) {
       title: item.title,
       link: item.link
     })));
-    headlines = dedupeHeadlines(headlines).slice(0, 20); // Top 20, de-duped
+    headlines = dedupeHeadlines(headlines).slice(0, 20);
   } catch (err) {
     // On fetch error, fallback to Redis cache if available
     const cachedScoreData = await redis.get('ww3:score');
@@ -114,7 +107,7 @@ export default async function handler(req, res) {
     });
   }
 
-  // 2. Hash & Redis cache check
+  // 2. Cache check
   const headlinesHash = hashHeadlines(headlines);
   const [cachedHash, cachedScoreData, cachedTimestamp] = await Promise.all([
     redis.get('ww3:hash'),
@@ -132,14 +125,14 @@ export default async function handler(req, res) {
     return res.status(200).json(JSON.parse(cachedScoreData));
   }
 
-  // 3. Calculate scores (algorithm + AI)
-  const algoScore = timelessWW3Score(headlines.map(h => h.title));
+  // 3. Calculate conservative score
+  const algoScore = realisticWW3Score(headlines.map(h => h.title));
 
-  // ---- GPT-4.1 mini (or 4o-mini if you want)
+  // 4. Run GPT for independent risk estimate (part of calculation, not just a check)
   const prompt = `
 You are an expert geopolitical analyst for a World War III Countdown app.
 
-Given these headlines:
+Given these news headlines:
 ${headlines.map((h, i) => `${i + 1}. ${h.title}`).join('\n')}
 
 Estimate a global war risk score from 0 (peace) to 100 (World War III is officially underway), following these rules:
@@ -151,8 +144,8 @@ Estimate a global war risk score from 0 (peace) to 100 (World War III is officia
 - 90–99: Large-scale superpower war or confirmed nuclear use, not formal world war
 - 100: Only give this score if there are *official declarations of World War III* or confirmed, ongoing global wars between multiple superpowers. Escalating rhetoric, threats, or regional wars—even involving superpowers—should not be scored 100.
 
-Respond in strict JSON only: {"score": [number], "summary": "[1-2 sentences, mention key headlines and your reasoning]" }
-  `.trim();
+Respond in strict JSON only: {"score": [number], "summary": "[1-2 sentences, mention key headlines and your reasoning]"}
+`.trim();
 
   let gptScore = null, gptSummary = '';
   try {
@@ -166,7 +159,7 @@ Respond in strict JSON only: {"score": [number], "summary": "[1-2 sentences, men
         model: 'gpt-4.1-mini', // Or 'gpt-4o-mini'
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 280,
-        temperature: 0.12
+        temperature: 0.15
       })
     });
     const gptJson = await gptResp.json();
@@ -181,35 +174,40 @@ Respond in strict JSON only: {"score": [number], "summary": "[1-2 sentences, men
     gptSummary = 'AI summary unavailable (GPT error).';
   }
 
-  // 4. Blending: never allow full “peace” if conflicts ongoing
+  // 5. Smart blending (AI is part of score, but outlier check is enforced)
   let finalScore = algoScore;
-  if (
-    gptScore !== null &&
-    Math.abs(gptScore - algoScore) <= 30 &&
-    gptScore >= 0 &&
-    gptScore <= 100
-  ) {
-    finalScore = Number(((algoScore * 0.6 + gptScore * 0.4)).toFixed(2));
+  let summaryWithWarning = gptSummary;
+  if (gptScore !== null && gptScore >= 0 && gptScore <= 100) {
+    if (Math.abs(gptScore - algoScore) <= 15) {
+      finalScore = Number(((algoScore * 0.6 + gptScore * 0.4)).toFixed(2));
+    } else {
+      // Outlier check: take lower and add warning
+      finalScore = Math.min(algoScore, gptScore, 65);
+      summaryWithWarning = `NOTE: AI model gave a divergent score (${gptScore}), conservative estimate used. ${gptSummary}`;
+    }
   }
 
-  // If major conflict headlines, force minimum “tension” score (e.g., 20)
+  // Never show > 90 unless both algo and GPT return >= 90 and news supports
+  if (finalScore > 90 && (!algoScore >= 90 || !gptScore >= 90)) finalScore = 89;
+
+  // If any regional war or superpower clash is ongoing, enforce minimum 20
   const HOTSPOTS = ['ukraine', 'gaza', 'israel', 'iran', 'taiwan', 'china', 'missile', 'strike', 'war', 'russia'];
   if (headlines.some(h =>
     HOTSPOTS.some(hs => h.title.toLowerCase().includes(hs))
   )) {
-    finalScore = Math.max(finalScore, 20); // Don’t allow “peace” if any ongoing
+    finalScore = Math.max(finalScore, 20);
   }
 
-  // If nothing but peace and diplomacy, let it drop to peace range
+  // Final clamp
   finalScore = Math.max(0, Math.min(100, finalScore));
 
-  // Debugging log (optional, comment in prod)
+  // Log for transparency
   console.log({ algoScore, gptScore, finalScore, gptSummary, topHeadlines: headlines.slice(0, 3) });
 
-  // 5. Save/cache
+  // 6. Save/cache
   const newScoreData = {
     score: finalScore,
-    summary: gptSummary,
+    summary: summaryWithWarning,
     headlines,
     algorithmScore: algoScore,
     gptScore,
