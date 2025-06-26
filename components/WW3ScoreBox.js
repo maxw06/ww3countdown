@@ -1,36 +1,30 @@
 import { useEffect, useRef, useState } from "react";
 
+// Score bands: 0–10 Peace | 11–29 Tension | 30–69 Elevated | 70–89 Crisis | 90+ Critical | 100 World War
 function getScoreClass(score) {
-  if (score === 100) return "animate-strobe bg-white text-black";
-  if (score >= 98) return "animate-flash-red bg-red-700 text-white";
+  if (score === 100) return "bg-black text-white animate-pulse";
   if (score >= 90) return "bg-red-700 text-white";
-  if (score >= 80) return "bg-yellow-400 text-black";
-  if (score >= 70) return "bg-orange-500 text-white";
-  if (score >= 50) return "bg-orange-400 text-black";
+  if (score >= 70) return "bg-orange-400 text-black";
   if (score >= 30) return "bg-yellow-300 text-black";
-  if (score >= 11) return "bg-green-300 text-black";
-  return "bg-green-600 text-white";
+  if (score >= 11) return "bg-blue-400 text-black";
+  return "bg-green-500 text-white";
 }
-
 function getScoreLabel(score) {
   if (score === 100) return "☢️ WORLD WAR";
-  if (score >= 98) return "🚨 CRITICAL (Imminent)";
   if (score >= 90) return "🚨 CRITICAL";
-  if (score >= 80) return "⚠️ SEVERE";
-  if (score >= 70) return "CRISIS";
-  if (score >= 50) return "HIGH";
-  if (score >= 30) return "ELEVATED";
-  if (score >= 11) return "LOW";
-  return "PEACE";
+  if (score >= 70) return "🟠 CRISIS";
+  if (score >= 30) return "🟡 ELEVATED";
+  if (score >= 11) return "🔵 TENSION";
+  return "🟢 PEACE";
 }
 
 export default function WW3ScoreBox({ score, lastUpdated }) {
   const alarmRef = useRef(null);
   const [audioError, setAudioError] = useState(false);
 
-  // Play sound for score >=98 automatically
+  // Play sound for score = 100 automatically
   useEffect(() => {
-    if (score >= 98 && alarmRef.current) {
+    if (score === 100 && alarmRef.current) {
       alarmRef.current.muted = false;
       alarmRef.current.currentTime = 0;
       alarmRef.current.play().catch(() => {});
@@ -43,15 +37,9 @@ export default function WW3ScoreBox({ score, lastUpdated }) {
       alarmRef.current.muted = false;
       alarmRef.current.currentTime = 0;
       const playPromise = alarmRef.current.play();
-      if (playPromise) {
-        playPromise.catch((e) => {
-          setAudioError(true);
-          // Optionally alert the user if playback fails
-        });
-      }
+      if (playPromise) playPromise.catch(() => setAudioError(true));
     }
   };
-
   const stopAlarm = () => {
     if (alarmRef.current) {
       alarmRef.current.pause();
@@ -71,8 +59,9 @@ export default function WW3ScoreBox({ score, lastUpdated }) {
         {Number(score).toFixed(2)}
         <span className="text-3xl font-bold align-top">/100</span>
       </div>
-      <div className="mt-1 text-2xl font-semibold tracking-wide uppercase">
-        {getScoreLabel(score)}
+      <div className="mt-1 text-2xl font-semibold tracking-wide uppercase flex items-center">
+        <span className="mr-2">{getScoreLabel(score).split(" ")[0]}</span>
+        <span>{getScoreLabel(score).split(" ").slice(1).join(" ")}</span>
       </div>
       {lastUpdated && (
         <div className="text-xs opacity-70 mt-2">
@@ -81,7 +70,6 @@ export default function WW3ScoreBox({ score, lastUpdated }) {
             : new Date(lastUpdated).toLocaleTimeString()}
         </div>
       )}
-
       <div className="flex space-x-3 mt-5">
         <button
           onClick={playTestAlarm}
@@ -96,8 +84,6 @@ export default function WW3ScoreBox({ score, lastUpdated }) {
           Stop Alarm
         </button>
       </div>
-
-
       <audio
         ref={alarmRef}
         src="/war.mp3"
