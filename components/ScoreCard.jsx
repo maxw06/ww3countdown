@@ -1,12 +1,13 @@
 import React, { useEffect, useRef } from "react";
 
+// Score bands & legend: 0–10 Peace | 11–29 Tension | 30–69 Elevated | 70–89 Crisis | 90+ Critical | 100 World War
 function getLevel(score) {
-  if (score >= 100) return { label: "WAR", color: "bg-black text-white animate-pulse", emoji: "☢️" };
-  if (score >= 98) return { label: "Imminent", color: "bg-red-700 text-white animate-pulse", emoji: "🚨" };
-  if (score >= 85) return { label: "Critical", color: "bg-red-700 text-white", emoji: "🚨" };
-  if (score >= 60) return { label: "High", color: "bg-orange-500 text-white", emoji: "⚠️" };
-  if (score >= 30) return { label: "Elevated", color: "bg-yellow-300 text-black", emoji: "🟡" };
-  return { label: "Low", color: "bg-green-500 text-white", emoji: "🟢" };
+  if (score === 100) return { label: "WORLD WAR", color: "bg-black text-white animate-pulse", emoji: "☢️" };
+  if (score >= 90) return { label: "CRITICAL", color: "bg-red-700 text-white", emoji: "🚨" };
+  if (score >= 70) return { label: "CRISIS", color: "bg-orange-600 text-white", emoji: "🟠" };
+  if (score >= 30) return { label: "ELEVATED", color: "bg-yellow-300 text-black", emoji: "🟡" };
+  if (score >= 11) return { label: "TENSION", color: "bg-blue-400 text-black", emoji: "🔵" };
+  return { label: "PEACE", color: "bg-green-500 text-white", emoji: "🟢" };
 }
 
 function scoreToClock(score) {
@@ -29,13 +30,12 @@ export default function ScoreCard({ score = 0 }) {
   // War sound logic
   const warAudioRef = useRef(null);
   useEffect(() => {
-    if (score >= 98 && warAudioRef.current) {
+    if (score === 100 && warAudioRef.current) {
       warAudioRef.current.currentTime = 0;
       warAudioRef.current.play();
     }
   }, [score]);
 
-  // Play test alarm
   const playTestAlarm = () => {
     if (warAudioRef.current) {
       warAudioRef.current.currentTime = 0;
@@ -43,21 +43,21 @@ export default function ScoreCard({ score = 0 }) {
     }
   };
 
-  // Color for score number
+  // Score text color for main number
   let scoreNumberColor =
-    score >= 100 ? "text-white" :
-    score >= 98 ? "text-yellow-200 animate-pulse" :
-    score >= 85 ? "text-red-400" :
-    score >= 60 ? "text-orange-400" :
+    score === 100 ? "text-white animate-pulse" :
+    score >= 90 ? "text-red-400" :
+    score >= 70 ? "text-orange-400" :
     score >= 30 ? "text-yellow-500" :
+    score >= 11 ? "text-blue-300" :
     "text-green-200";
 
-  // Extra flash for war
-  let warFlashing = score >= 100 ? "animate-pulse bg-black text-white border-4 border-white" : "";
+  // Flash for World War
+  let warFlashing = score === 100 ? "animate-pulse bg-black text-white border-4 border-white" : "";
 
   return (
     <div className={`p-8 rounded-3xl shadow-2xl w-full max-w-xl mb-8 text-center border-4 transition-colors duration-500 ${color} ${warFlashing}`}>
-      {/* War sound, hidden audio tag */}
+      {/* War sound */}
       <audio ref={warAudioRef} src="/war.mp3" preload="auto" />
       <div className="flex flex-col items-center justify-center space-y-6">
         <div className="flex flex-row items-center justify-center space-x-4">
@@ -87,9 +87,9 @@ export default function ScoreCard({ score = 0 }) {
               : `${minutesToMidnight} minute${minutesToMidnight !== 1 ? "s" : ""} to midnight`}
           </span>
         </div>
-        {score >= 100 && (
+        {score === 100 && (
           <div className="mt-4 text-3xl font-black text-white animate-bounce tracking-wide">
-            🚨 WAR HAS STARTED 🚨
+            🚨 WORLD WAR DECLARED 🚨
           </div>
         )}
         <button
