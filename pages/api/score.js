@@ -31,15 +31,15 @@ function dedupeHeadlines(headlines) {
   });
 }
 
-// --- Conservative, reality-anchored scoring
+// --- Main risk calculation (anchors, not hype)
 function realisticWW3Score(headlines) {
   const text = headlines.join(' ').toLowerCase();
   let score = 0;
 
-  // Detect peace/ceasefire: major reduction
+  // 1. Peace/ceasefire detection: heavy reduction
   if (/ceasefire|diplomacy|peace talks|negotiation|summit|armistice|paused|de-escalation/.test(text)) score -= 30;
 
-  // Detect regional conflicts: set a minimum but not "crisis"
+  // 2. Major regional conflict detection
   const conflicts = [
     { name: 'russia-ukraine', keywords: ['ukraine', 'donbas', 'russia', 'putin'], min: 25 },
     { name: 'israel-iran', keywords: ['israel', 'iran', 'hezbollah', 'hamas', 'gaza'], min: 25 },
@@ -49,8 +49,13 @@ function realisticWW3Score(headlines) {
   for (const c of conflicts) {
     if (c.keywords.some(k => text.includes(k))) minScore = Math.max(minScore, c.min);
   }
+  // If more than one major conflict, raise floor
+  let activeHotspots = conflicts.reduce((acc, c) =>
+    c.keywords.some(k => text.includes(k)) ? acc + 1 : acc, 0
+  );
+  if (activeHotspots > 1) minScore = Math.max(minScore, 40);
 
-  // Superpower conflict & nuclear logic
+  // 3. Superpower conflict & nuclear language
   const superpowers = ['us', 'united states', 'america', 'china', 'russia', 'iran', 'nato', 'uk', 'britain', 'france'];
   const actions = ['strike', 'bomb', 'attack', 'launch', 'invade', 'missile', 'retaliat', 'shell', 'drone', 'escalat'];
   let superpowerConflict = 0;
@@ -67,14 +72,14 @@ function realisticWW3Score(headlines) {
   else if (superpowerConflict === 1) score += 25;
   else if (nuclearThreat > 0) score += 20;
 
-  // Escalation/war language (minor bump)
+  // 4. Escalation/war language bump
   if (/major escalation|total war|on the brink|direct military/.test(text)) score += 10;
 
-  // Minor strikes, sanctions, etc.
+  // 5. Minor strikes, sanctions, missile, shelling
   score += (text.match(/strike|attack|bombing|missile|drone|shelling/g) || []).length * 3;
   score += (text.match(/sanction|retaliat|warning|consequence|escalation|grave warning/g) || []).length * 2;
 
-  // Clamp: never > 60 unless double superpower/nuclear AND AI agrees
+  // 6. Clamp: never > 60 unless both double superpower/nuclear *and* AI agree
   score = Math.max(minScore, Math.max(0, Math.min(score, 60)));
   return Number(score.toFixed(2));
 }
@@ -92,7 +97,7 @@ export default async function handler(req, res) {
     })));
     headlines = dedupeHeadlines(headlines).slice(0, 20);
   } catch (err) {
-    // On fetch error, fallback to Redis cache if available
+    // Fallback to cache
     const cachedScoreData = await redis.get('ww3:score');
     if (cachedScoreData) {
       res.setHeader('Cache-Control', 'public, max-age=900, stale-while-revalidate=60');
@@ -114,7 +119,6 @@ export default async function handler(req, res) {
     redis.get('ww3:score'),
     redis.get('ww3:timestamp')
   ]);
-
   if (
     cachedScoreData &&
     cachedHash === headlinesHash &&
@@ -125,10 +129,10 @@ export default async function handler(req, res) {
     return res.status(200).json(JSON.parse(cachedScoreData));
   }
 
-  // 3. Calculate conservative score
+  // 3. Calculate algorithm score
   const algoScore = realisticWW3Score(headlines.map(h => h.title));
 
-  // 4. Run GPT for independent risk estimate (part of calculation, not just a check)
+  // 4. Run GPT-4 for independent AI risk score
   const prompt = `
 You are an expert geopolitical analyst for a World War III Countdown app.
 
@@ -174,34 +178,43 @@ Respond in strict JSON only: {"score": [number], "summary": "[1-2 sentences, men
     gptSummary = 'AI summary unavailable (GPT error).';
   }
 
-  // 5. Smart blending (AI is part of score, but outlier check is enforced)
+  // 5. Blend/override logic for accuracy and realism
   let finalScore = algoScore;
   let summaryWithWarning = gptSummary;
   if (gptScore !== null && gptScore >= 0 && gptScore <= 100) {
-    if (Math.abs(gptScore - algoScore) <= 15) {
-      finalScore = Number(((algoScore * 0.6 + gptScore * 0.4)).toFixed(2));
+    if (Math.abs(gptScore - algoScore) <= 20) {
+      finalScore = Number(((algoScore * 0.5 + gptScore * 0.5)).toFixed(2));
     } else {
-      // Outlier check: take lower and add warning
-      finalScore = Math.min(algoScore, gptScore, 65);
-      summaryWithWarning = `NOTE: AI model gave a divergent score (${gptScore}), conservative estimate used. ${gptSummary}`;
+      // If the difference is large, use the higher (unless one is extreme)
+      if (gptScore > algoScore && gptScore < 85) {
+        finalScore = gptScore;
+        summaryWithWarning = `AI risk model gave a higher estimate (${gptScore}). Showing more cautious result. ${gptSummary}`;
+      } else if (algoScore > gptScore && algoScore < 85) {
+        finalScore = algoScore;
+        summaryWithWarning = `Algorithm risk model gave a higher estimate (${algoScore}). Showing more cautious result. ${gptSummary}`;
+      } else {
+        // If either score is >85, cap at 70 unless both are extreme
+        finalScore = Math.min(algoScore, gptScore, 70);
+        summaryWithWarning = `Large model disagreement (${algoScore} vs ${gptScore}), using conservative cap. ${gptSummary}`;
+      }
     }
   }
 
-  // Never show > 90 unless both algo and GPT return >= 90 and news supports
-  if (finalScore > 90 && (!algoScore >= 90 || !gptScore >= 90)) finalScore = 89;
+  // Never show >90 unless BOTH models say so, and news supports it
+  if (finalScore > 90 && !(algoScore >= 90 && gptScore >= 90)) finalScore = 89;
 
-  // If any regional war or superpower clash is ongoing, enforce minimum 20
+  // If two or more hotspots, min 40; if one, min 25
   const HOTSPOTS = ['ukraine', 'gaza', 'israel', 'iran', 'taiwan', 'china', 'missile', 'strike', 'war', 'russia'];
-  if (headlines.some(h =>
-    HOTSPOTS.some(hs => h.title.toLowerCase().includes(hs))
-  )) {
-    finalScore = Math.max(finalScore, 20);
-  }
+  const hotspotCount = headlines.reduce((acc, h) =>
+    acc + (HOTSPOTS.some(hs => h.title.toLowerCase().includes(hs)) ? 1 : 0), 0
+  );
+  if (hotspotCount >= 2) finalScore = Math.max(finalScore, 40);
+  else if (hotspotCount === 1) finalScore = Math.max(finalScore, 25);
 
   // Final clamp
   finalScore = Math.max(0, Math.min(100, finalScore));
 
-  // Log for transparency
+  // Debug logging for transparency
   console.log({ algoScore, gptScore, finalScore, gptSummary, topHeadlines: headlines.slice(0, 3) });
 
   // 6. Save/cache
